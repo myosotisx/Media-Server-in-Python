@@ -35,7 +35,7 @@ class RTP_Header:
 
     def increase_seq(self):
         seq = self.header[2] << 8 | self.header[3]
-        seq += 1
+        seq = (seq+1) % 65536
         self.header[2] = (seq >> 8) & 255
         self.header[3] = seq & 255
 

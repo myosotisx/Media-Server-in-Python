@@ -49,6 +49,7 @@ class Server:
         self.client_status = [None] * self.server_backlog
         self.client_session_id = [0] * self.server_backlog
         self.client_video_filepath = [None] * self.server_backlog
+        self.client_play_event = [None] * self.server_backlog
         self.mapper = {}
 
         self.session_id_generator = util.random_generator(1000)
@@ -78,13 +79,16 @@ class Server:
 
         rtp_header = RTP_Header()
         rtp_header.set_header(2, 0, 0, 0, 0, 0, rtp_header.get_payload_type(file_ext), 10)
-        bytes_cnt = 0
         for rtp_payload in ts.get_ts_rtp_payload(file):
-            bytes_cnt += self.server_rtp_socket.sendto(rtp_header.header + rtp_payload, (self.client_addr[client_index][0],
+            if self.client_status[client_index] == self.READY:
+                self.client_play_event[client_index].wait()
+            if self.client_status[client_index] == self.IDLE:
+                file.close()
+                break
+            self.server_rtp_socket.sendto(rtp_header.header + rtp_payload, (self.client_addr[client_index][0],
                                                                             self.client_rtp_port[client_index]))
             rtp_header.increase_seq()
-            print(bytes_cnt)
-
+            time.sleep(0.001)
 
     def control(self, client_index):
         while True:
@@ -197,27 +201,56 @@ class Server:
         if self.client_status[client_index] != self.READY:
             return
 
+        if not self.client_rtp_thread[client_index]:
+            # start stream
+            request_dict = rtsp.get_request_dict(request)
+            seq = int(request_dict.get('CSeq'))
+            session_id = int(request_dict.get('Session'))
+            if seq is None or session_id != self.client_session_id[client_index]:
+                return
+
+            video_filepath = self.client_video_filepath[client_index]
+            if video_filepath:
+                self.client_status[client_index] = self.PLAY
+                response_dict = {'CSeq': str(seq),
+                                 'Session': str(self.client_session_id[client_index])}
+                response = rtsp.generate_response(response_dict, type=rtsp.OK)
+                self.client_rtsp_socket[client_index].send(response.encode())
+                self.client_rtp_thread[client_index] = threading.Thread(target=self.stream, args=(client_index,
+                                                                                                  video_filepath))
+                self.client_status[client_index] = self.PLAY
+                self.client_play_event[client_index] = threading.Event()
+                self.client_rtp_thread[client_index].start()
+                self.client_rtcp_thread[client_index] = threading.Thread(target=self.control, args=(client_index,))
+                self.client_rtcp_thread[client_index].start()
+        else:
+            # resume stream
+            self.client_status[client_index] = self.PLAY
+            self.client_play_event[client_index].set()
+
+    def handle_PAUSE(self, client_index, request):
+        if self.client_status[client_index] != self.PLAY:
+            return
+
         request_dict = rtsp.get_request_dict(request)
         seq = int(request_dict.get('CSeq'))
         session_id = int(request_dict.get('Session'))
         if seq is None or session_id != self.client_session_id[client_index]:
             return
 
-        video_filepath = self.client_video_filepath[client_index]
-        if video_filepath:
-            self.client_status[client_index] = self.PLAY
-            response_dict = {'CSeq': str(seq),
-                             'Session': str(self.client_session_id[client_index])}
-            response = rtsp.generate_response(response_dict, type=rtsp.OK)
-            self.client_rtsp_socket[client_index].send(response.encode())
-            self.client_rtp_thread[client_index] = threading.Thread(target=self.stream, args=(client_index,
-                                                                                              video_filepath))
-            self.client_rtp_thread[client_index].start()
-            self.client_rtcp_thread[client_index] = threading.Thread(target=self.control, args=(client_index,))
-            self.client_rtcp_thread[client_index].start()
+        self.client_play_event[client_index].clear()
+        self.client_status[client_index] = self.READY
 
-    def handle_PAUSE(self, client_index, request):
-        pass
+        response_dict = {'CSeq': str(seq),
+                         'Session': str(self.client_session_id[client_index])}
+        response = rtsp.generate_response(response_dict, type=rtsp.OK)
+        self.client_rtsp_socket[client_index].send(response.encode())
+
+
+
+
+
+
 
     def handle_TEARDOWN(self, client_index, request):
         pass
