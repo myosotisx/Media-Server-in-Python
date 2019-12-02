@@ -50,7 +50,7 @@ class Server:
         self.client_session_id = [0] * self.server_backlog
         self.client_video_filepath = [None] * self.server_backlog
         self.client_play_event = [None] * self.server_backlog
-        self.mapper = {}
+        # self.mapper = {}
 
         self.session_id_generator = util.random_generator(1000)
 
@@ -71,11 +71,11 @@ class Server:
             print('Error invalid file type ' + file_ext)
             return
 
-        file = None
         try:
             file = open(filepath, 'rb')
         except:
             print('Error: fail to open file ' + filepath)
+            return
 
         rtp_header = RTP_Header()
         rtp_header.set_header(2, 0, 0, 0, 0, 0, rtp_header.get_payload_type(file_ext), 10)
@@ -83,12 +83,16 @@ class Server:
             if self.client_status[client_index] == self.READY:
                 self.client_play_event[client_index].wait()
             if self.client_status[client_index] == self.IDLE:
-                file.close()
                 break
-            self.server_rtp_socket.sendto(rtp_header.header + rtp_payload, (self.client_addr[client_index][0],
+            try:
+                self.server_rtp_socket.sendto(rtp_header.header + rtp_payload, (self.client_addr[client_index][0],
                                                                             self.client_rtp_port[client_index]))
+            except:
+                break
             rtp_header.increase_seq()
             time.sleep(0.001)
+        print('Exit RTP thread.')
+        file.close()
 
     def control(self, client_index):
         while True:
@@ -99,7 +103,7 @@ class Server:
         for i in range(self.server_backlog):
             if not self.client_session_id[i]:
                 self.client_session_id[i] = next(self.session_id_generator)
-                self.mapper[self.client_session_id[i]] = i
+                # self.mapper[self.client_session_id[i]] = i
                 self.client_rtsp_socket[i] = rtsp_socket
                 self.client_rtp_socket[i] = None
                 self.client_addr[i] = addr
@@ -111,7 +115,12 @@ class Server:
 
     def handle_client(self, client_index):
         while True:
-            request_bytes = self.client_rtsp_socket[client_index].recv(1024)
+            try:
+                request_bytes = self.client_rtsp_socket[client_index].recv(1024)
+            except:
+                print('Exit RTSP thread.')
+                self.destroy_client(client_index)
+                break
             if request_bytes:
                 self.mapping_rtsp_request(client_index, request_bytes.decode('utf-8'))
 
@@ -180,13 +189,8 @@ class Server:
             return
 
         path_tup = util.parse_path(request, self.server_root)
-        print(path_tup)
         self.client_video_filepath[client_index] = path.join(path_tup[0], path_tup[1] + '.ts')
-
-        print(self.client_video_filepath[client_index])
-
         self.client_status[client_index] = self.READY
-
         response_dict = {'CSeq': str(seq), 'Transport': 'RTP/AVP;unicast;client_port=%d-%d;server_port=%d-%d' %
                                                         (self.client_rtp_port[client_index],
                                                          self.client_rtcp_port[client_index],
@@ -201,14 +205,14 @@ class Server:
         if self.client_status[client_index] != self.READY:
             return
 
+        request_dict = rtsp.get_request_dict(request)
+        seq = int(request_dict.get('CSeq'))
+        session_id = int(request_dict.get('Session'))
+        if seq is None or session_id != self.client_session_id[client_index]:
+            return
+
         if not self.client_rtp_thread[client_index]:
             # start stream
-            request_dict = rtsp.get_request_dict(request)
-            seq = int(request_dict.get('CSeq'))
-            session_id = int(request_dict.get('Session'))
-            if seq is None or session_id != self.client_session_id[client_index]:
-                return
-
             video_filepath = self.client_video_filepath[client_index]
             if video_filepath:
                 self.client_status[client_index] = self.PLAY
@@ -225,6 +229,10 @@ class Server:
                 self.client_rtcp_thread[client_index].start()
         else:
             # resume stream
+            response_dict = {'CSeq': str(seq),
+                             'Session': str(self.client_session_id[client_index])}
+            response = rtsp.generate_response(response_dict, type=rtsp.OK)
+            self.client_rtsp_socket[client_index].send(response.encode())
             self.client_status[client_index] = self.PLAY
             self.client_play_event[client_index].set()
 
@@ -246,14 +254,47 @@ class Server:
         response = rtsp.generate_response(response_dict, type=rtsp.OK)
         self.client_rtsp_socket[client_index].send(response.encode())
 
-
-
-
-
-
-
     def handle_TEARDOWN(self, client_index, request):
-        pass
+        request_dict = rtsp.get_request_dict(request)
+        seq = int(request_dict.get('CSeq'))
+        session_id = int(request_dict.get('Session'))
+        if seq is None or session_id != self.client_session_id[client_index]:
+            return
+
+        response_dict = {'CSeq': str(seq),
+                         'Session': str(self.client_session_id[client_index])}
+        response = rtsp.generate_response(response_dict, type=rtsp.OK)
+        self.client_rtsp_socket[client_index].send(response.encode())
+        self.destroy_client(client_index)
+
+    def destroy_client(self, client_index):
+        # reset client status
+        self.client_status[client_index] = self.IDLE
+
+        # reset client rtsp socket
+        if self.client_rtsp_socket[client_index]:
+            self.client_rtsp_socket[client_index].shutdown(socket.SHUT_RDWR)
+            self.client_rtsp_socket[client_index].close()
+            self.client_rtsp_socket[client_index] = None
+
+        # reset client rtp socket
+        if self.client_rtp_socket[client_index]:
+            self.client_rtp_socket[client_index].shutdown(socket.SHUT_RDWR)
+            self.client_rtp_socket[client_index].close()
+            self.client_rtp_socket[client_index] = None
+
+        # reset client thread
+        self.client_rtsp_thread[client_index] = None
+        self.client_rtp_thread[client_index] = None
+        self.client_rtcp_thread[client_index] = None
+        self.client_play_event[client_index] = None
+
+        # reset client parameters
+        self.client_rtp_port[client_index] = None
+        self.client_rtcp_port[client_index] = None
+        self.client_addr[client_index] = None
+        self.client_session_id[client_index] = 0
+        self.client_video_filepath[client_index] = None
 
 
 server = Server('127.0.0.1', 57501, 57502, 57503, 10)

@@ -33,7 +33,6 @@ def match_rtp_rtcp_port(string):
 def parse_path(request, root=''):
     url = request.split('\n')[0].split(' ')[1]
     url_path = urlparse(url).path
-    print(url_path)
     path_tup = get_media_path(root, url_path)
     return path_tup
 
