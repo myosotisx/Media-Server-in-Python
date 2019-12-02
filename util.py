@@ -36,6 +36,7 @@ def parse_path(request, root=''):
     path_tup = get_media_path(root, url_path)
     return path_tup
 
+
 def parse_ext(request):
     url = request.split('\n')[0].split(' ')[1]
     return path.splitext(url)

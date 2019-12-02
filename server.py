@@ -217,7 +217,13 @@ class Server:
             if video_filepath:
                 self.client_status[client_index] = self.PLAY
                 response_dict = {'CSeq': str(seq),
-                                 'Session': str(self.client_session_id[client_index])}
+                                 'Session': str(self.client_session_id[client_index]),
+                                 'Range': 'npt=0.000-'}
+                duration = ts.get_video_duration(video_filepath)
+                if duration != -1:
+                    duration = ts.get_video_duration(video_filepath) / 1000  # msec to sec
+                    response_dict['Range'] = 'npt=0.000-%.3f' % duration
+
                 response = rtsp.generate_response(response_dict, type=rtsp.OK)
                 self.client_rtsp_socket[client_index].send(response.encode())
                 self.client_rtp_thread[client_index] = threading.Thread(target=self.stream, args=(client_index,

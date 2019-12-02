@@ -28,5 +28,38 @@ class TS:
                     print('not 0x47 in head of %d' % i)
             yield ts_packets
 
+    def get_video_duration(self, filename):
+        file = open(filename, 'rb')
+        packet_cnt = 1
+        while packet_cnt <= 1024:
+            file.seek(-packet_cnt*TS_PACKET_SIZE, 2)
+            packet = file.read(TS_PACKET_SIZE)
+            res = self.get_pcr_value(packet)
+            if res != -1:
+                return res
+            packet_cnt += 1
+
+    def get_pcr_value(self, data):
+        if not (data[3] & 0x20):
+            # print('no field')
+            return -1
+        length = data[4]
+        if length == 0:
+            # print('length is 0')
+            return -1
+        if not (data[5] & 0x10):
+            # print('no pcr')
+            return -1
+
+        pref = data[6:6 + 4]
+        v_ref = int.from_bytes(pref, 'big')
+        v_ref = v_ref << 1
+        v_ref += data[10] / 128
+        v_ext = (data[10] % 2) * 256 + data[11]
+        res = (v_ref * 300 + v_ext) // 27000
+        return res
+
+
+
 
 ts = TS()
