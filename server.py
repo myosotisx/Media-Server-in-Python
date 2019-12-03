@@ -10,6 +10,7 @@ from rtsp import rtsp
 from rtp import RTP_Header
 from h264 import h264
 from aac import aac
+from ts import TS_PACKET_SIZE
 from ts import ts
 
 
@@ -50,7 +51,8 @@ class Server:
         self.client_session_id = [0] * self.server_backlog
         self.client_video_filepath = [None] * self.server_backlog
         self.client_play_event = [None] * self.server_backlog
-        # self.mapper = {}
+        self.client_video_duration = [None] * self.server_backlog
+        self.client_video_file = [None] * self.server_backlog
 
         self.session_id_generator = util.random_generator(1000)
 
@@ -72,27 +74,32 @@ class Server:
             return
 
         try:
-            file = open(filepath, 'rb')
+            self.client_video_file[client_index] = open(filepath, 'rb')
         except:
             print('Error: fail to open file ' + filepath)
             return
 
         rtp_header = RTP_Header()
         rtp_header.set_header(2, 0, 0, 0, 0, 0, rtp_header.get_payload_type(file_ext), 10)
-        for rtp_payload in ts.get_ts_rtp_payload(file):
+        while True:
             if self.client_status[client_index] == self.READY:
                 self.client_play_event[client_index].wait()
             if self.client_status[client_index] == self.IDLE:
                 break
+            rtp_payload = self.client_video_file[client_index].read(7*TS_PACKET_SIZE)
+            if not rtp_payload:
+                continue
             try:
                 self.server_rtp_socket.sendto(rtp_header.header + rtp_payload, (self.client_addr[client_index][0],
                                                                             self.client_rtp_port[client_index]))
             except:
                 break
+            print(rtp_header.get_seq())
             rtp_header.increase_seq()
             time.sleep(0.001)
         print('Exit RTP thread.')
-        file.close()
+        if self.client_video_file[client_index]:
+            self.client_video_file[client_index].close()
 
     def control(self, client_index):
         while True:
@@ -204,7 +211,6 @@ class Server:
     def handle_PLAY(self, client_index, request):
         if self.client_status[client_index] != self.READY:
             return
-
         request_dict = rtsp.get_request_dict(request)
         seq = int(request_dict.get('CSeq'))
         session_id = int(request_dict.get('Session'))
@@ -221,8 +227,9 @@ class Server:
                                  'Range': 'npt=0.000-'}
                 duration = ts.get_video_duration(video_filepath)
                 if duration != -1:
-                    duration = ts.get_video_duration(video_filepath) / 1000  # msec to sec
-                    response_dict['Range'] = 'npt=0.000-%.3f' % duration
+                    duration = duration / 1000  # msec to sec
+                    self.client_video_duration[client_index] = duration
+                    response_dict['Range'] = 'npt=0.000-%.3f' % self.client_video_duration[client_index]
 
                 response = rtsp.generate_response(response_dict, type=rtsp.OK)
                 self.client_rtsp_socket[client_index].send(response.encode())
@@ -234,11 +241,37 @@ class Server:
                 self.client_rtcp_thread[client_index] = threading.Thread(target=self.control, args=(client_index,))
                 self.client_rtcp_thread[client_index].start()
         else:
-            # resume stream
             response_dict = {'CSeq': str(seq),
-                             'Session': str(self.client_session_id[client_index])}
+                             'Session': str(self.client_session_id[client_index]),
+                             'Range': 'npt=now-'}
+            start_time, end_time = util.match_media_time(request)
+            if start_time != 'now':
+                # reposition stream
+                self.client_video_file[client_index].seek(0, 0)
+                print('after seek')
+                # search for the start packet
+                start_time = float(start_time) * 1000
+                while True:
+                    data = self.client_video_file[client_index].read(TS_PACKET_SIZE)
+                    if not data:
+                        break
+                    pcr = ts.get_pcr_value(data)
+                    if pcr >= start_time:  # compare with msec
+                        print('pcr: '+str(pcr))
+                        self.client_video_file[client_index].seek(-TS_PACKET_SIZE, 1)
+                        start_time = pcr / 1000  # transfer to sec
+                        break
+                if self.client_video_duration[client_index]:
+                    response_dict['Range'] = 'npt=%.3f-%.3f' % (start_time, self.client_video_duration[client_index])
+                else:
+                    response_dict['Range'] = 'npt=%.3f-' % start_time
+            elif self.client_video_duration[client_index]:
+                # resume stream
+                response_dict['Range'] = 'npt=now-%.3f' % self.client_video_duration[client_index]
+
             response = rtsp.generate_response(response_dict, type=rtsp.OK)
             self.client_rtsp_socket[client_index].send(response.encode())
+            print(response)
             self.client_status[client_index] = self.PLAY
             self.client_play_event[client_index].set()
 
@@ -301,6 +334,8 @@ class Server:
         self.client_addr[client_index] = None
         self.client_session_id[client_index] = 0
         self.client_video_filepath[client_index] = None
+        self.client_video_duration[client_index] = None
+        self.client_video_file[client_index] = None
 
 
 server = Server('127.0.0.1', 57501, 57502, 57503, 10)

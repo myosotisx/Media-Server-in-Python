@@ -15,19 +15,6 @@ class TS:
                                          framerate=framerate,
                                          network_type=network_type, ip_type=ip_type, ip=ip)
 
-    def get_ts_rtp_payload(self, file):
-        while True:
-            ts_packets = file.read(7*TS_PACKET_SIZE)
-            length = len(ts_packets)
-            if length <= 0:
-                print('finish read ts file')
-                break
-            # print('read len is %d %d' % (length, length % 188))
-            for i in range(length//188):
-                if ts_packets[i*TS_PACKET_SIZE] != 0x47:
-                    print('not 0x47 in head of %d' % i)
-            yield ts_packets
-
     def get_video_duration(self, filename):
         file = open(filename, 'rb')
         packet_cnt = 1
@@ -58,8 +45,6 @@ class TS:
         v_ext = (data[10] % 2) * 256 + data[11]
         res = (v_ref * 300 + v_ext) // 27000
         return res
-
-
 
 
 ts = TS()

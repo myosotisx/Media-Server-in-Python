@@ -40,3 +40,11 @@ def parse_path(request, root=''):
 def parse_ext(request):
     url = request.split('\n')[0].split(' ')[1]
     return path.splitext(url)
+
+
+def match_media_time(request):
+    res = re.search(r'npt=(?P<cur_time>(\d*\.?\d*)|now)-(?P<end_time>\d*\.?\d*)', request)
+    if not res:
+        return None, None
+    res_dict = res.groupdict()
+    return res_dict['cur_time'], res_dict['end_time']
