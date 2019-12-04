@@ -53,4 +53,4 @@ def match_media_time(request):
 def make_stream_file(filepath):
     if not path.exists(filepath):
         filename = path.splitext(filepath)[0]
-        system('ffmpeg -y -i %s.mp4 -vcodec copy -acodec copy -vbsf h264_mp4toannexb %s.ts' % (filename, filename))
+        system('ffmpeg -i %s.mp4 -vcodec copy -acodec copy -vbsf h264_mp4toannexb %s.ts' % (filename, filename))

@@ -130,6 +130,7 @@ class Server:
                 self.mapping_rtsp_request(client_index, request_bytes.decode('utf-8'))
 
     def mapping_rtsp_request(self, client_index, request):
+        print(request)
         cmd = request.split('\n')[0].split(' ')[0]
         if cmd == 'OPTIONS':
             self.handle_OPTIONS(client_index, request)
@@ -320,13 +321,13 @@ class Server:
 
         # reset client rtsp socket
         if self.client_rtsp_socket[client_index]:
-            self.client_rtsp_socket[client_index].shutdown(socket.SHUT_RDWR)
+            # self.client_rtsp_socket[client_index].shutdown(socket.SHUT_RDWR)
             self.client_rtsp_socket[client_index].close()
             self.client_rtsp_socket[client_index] = None
 
         # reset client rtp socket
         if self.client_rtp_socket[client_index]:
-            self.client_rtp_socket[client_index].shutdown(socket.SHUT_RDWR)
+            # self.client_rtp_socket[client_index].shutdown(socket.SHUT_RDWR)
             self.client_rtp_socket[client_index].close()
             self.client_rtp_socket[client_index] = None
 
