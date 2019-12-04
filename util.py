@@ -1,6 +1,6 @@
 import random
 import re
-from os import path
+from os import path, system
 from urllib.parse import urlparse
 
 
@@ -48,3 +48,9 @@ def match_media_time(request):
         return None, None
     res_dict = res.groupdict()
     return res_dict['cur_time'], res_dict['end_time']
+
+
+def make_stream_file(filepath):
+    if not path.exists(filepath):
+        filename = path.splitext(filepath)[0]
+        system('ffmpeg -y -i %s.mp4 -vcodec copy -acodec copy -vbsf h264_mp4toannexb %s.ts' % (filename, filename))
