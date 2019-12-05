@@ -1,6 +1,5 @@
 import socket
 import threading
-from urllib.parse import urlparse
 from os import path
 
 import util
@@ -10,7 +9,6 @@ from rtsp import rtsp
 from rtp import RTP_Header
 from h264 import h264
 from aac import aac
-from ts import TS_PACKET_SIZE
 from ts import ts
 
 
@@ -87,7 +85,7 @@ class Server:
                 self.client_play_event[client_index].wait()
             if self.client_status[client_index] == self.IDLE:
                 break
-            rtp_payload = self.client_video_file[client_index].read(7*TS_PACKET_SIZE)
+            rtp_payload = ts.get_rtp_payload(self.client_video_file[client_index])
             if not rtp_payload:
                 continue
             try:
@@ -96,7 +94,9 @@ class Server:
             except:
                 break
             rtp_header.increase_seq()
-            time.sleep(0.001/self.client_play_speed[client_index])
+            # speed control
+            if rtp_header.get_seq() % (int(self.client_play_speed[client_index])+5) == 0:
+                time.sleep(0.001)
         if self.client_video_file[client_index]:
             self.client_video_file[client_index].close()
 
@@ -260,18 +260,9 @@ class Server:
                 # reposition stream
                 if self.client_status[client_index] != self.READY:
                     return
-                self.client_video_file[client_index].seek(0, 0)
                 # search for the start packet
                 start_time = float(start_time) * 1000
-                while True:
-                    data = self.client_video_file[client_index].read(TS_PACKET_SIZE)
-                    if not data:
-                        break
-                    pcr = ts.get_pcr_value(data)
-                    if pcr >= start_time:  # compare with msec
-                        self.client_video_file[client_index].seek(-TS_PACKET_SIZE, 1)
-                        start_time = pcr / 1000  # transfer to sec
-                        break
+                start_time = (ts.search_reposition_packet(self.client_video_file[client_index], start_time)) / 1000
                 if self.client_video_duration[client_index]:
                     response_dict['Range'] = 'npt=%.3f-%.3f' % (start_time, self.client_video_duration[client_index])
                 else:

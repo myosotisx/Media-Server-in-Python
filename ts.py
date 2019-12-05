@@ -46,5 +46,19 @@ class TS:
         res = (v_ref * 300 + v_ext) // 27000
         return res
 
+    def search_reposition_packet(self, file, ref_pcr):
+        file.seek(0)
+        while True:
+            data = file.read(TS_PACKET_SIZE)
+            if not data:
+                break
+            pcr = ts.get_pcr_value(data)
+            if pcr >= ref_pcr:  # compare with msec
+                file.seek(-TS_PACKET_SIZE, 1)
+                return pcr
+
+    def get_rtp_payload(self, file):
+        return file.read(7*TS_PACKET_SIZE)
+
 
 ts = TS()
